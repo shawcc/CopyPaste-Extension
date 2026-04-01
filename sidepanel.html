@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="sidepanel.css" />
+    <title>CopyPaste</title>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="top">
+        <div class="title">CopyPaste</div>
+        <a class="link" href="options.html" target="_blank" rel="noreferrer">设置</a>
+      </header>
+
+      <section class="card">
+        <div class="row">
+          <label class="label" for="modeSelect">提取模式</label>
+          <select id="modeSelect" class="select">
+            <option value="ui">界面文案候选（推荐）</option>
+            <option value="text">选区全文本</option>
+            <option value="images">图片占位</option>
+          </select>
+        </div>
+        <button id="scrollBtn" class="btn">开始滚动提取</button>
+        <button id="clipboardExtractBtn" class="btn primary">从剪贴板提取 (推荐)</button>
+        <button id="extractBtn" class="btn">提取网页DOM (旧版)</button>
+        <button id="copyBtn" class="btn" disabled>复制为表格（可粘贴到飞书）</button>
+        <button id="resetBtn" class="btn danger">重置清空</button>
+        <div id="status" class="status"></div>
+        <div class="tip">
+          飞书新版文档提取技巧：<br/>
+          1. 在左侧文档中框选你需要的内容。<br/>
+          2. 按下 <b>Command+C</b> (或 Ctrl+C) 复制。<br/>
+          3. 点击上方的 <b>“从剪贴板提取”</b> 按钮。
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="meta">
+          <div><span class="k">文案</span> <span id="lineCount">0</span></div>
+          <div><span class="k">图片</span> <span id="imageCount">0</span></div>
+        </div>
+        <ol id="preview" class="preview"></ol>
+        <div id="imagePreview" class="image-preview"></div>
+      </section>
+    </main>
+    <script src="exporter.js"></script>
+    <!-- 移除 Tesseract，换用通过 API 接口的 OCR 或更现代的方案。为了最快见效且无需下载几十MB的Wasm，我们这里使用免费的云端/轻量级 API 兜底，或告知用户需要时间加载 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

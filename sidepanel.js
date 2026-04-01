@@ -1,0 +1,457 @@
+const els = {
+  modeSelect: document.getElementById("modeSelect"),
+  clipboardExtractBtn: document.getElementById("clipboardExtractBtn"),
+  extractBtn: document.getElementById("extractBtn"),
+  copyBtn: document.getElementById("copyBtn"),
+  scrollBtn: document.getElementById("scrollBtn"),
+  resetBtn: document.getElementById("resetBtn"),
+  status: document.getElementById("status"),
+  lineCount: document.getElementById("lineCount"),
+  imageCount: document.getElementById("imageCount"),
+  preview: document.getElementById("preview"),
+  imagePreview: document.getElementById("imagePreview")
+};
+
+function setStatus(text, tone = "normal") {
+  els.status.textContent = text || "";
+  els.status.style.color =
+    tone === "error" ? "#b91c1c" : tone === "ok" ? "#065f46" : "#374151";
+}
+
+async function getActiveTab() {
+  return new Promise((resolve, reject) => {
+    // 侧边栏里获取真正的网页 tab，需要更宽泛的查询，排除扩展页面
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      let tab = (tabs || []).find(t => t.url && !t.url.startsWith('chrome-extension://'));
+      if (tab) return resolve(tab);
+      
+      // 如果当前窗口找不到，尝试 lastFocusedWindow
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs2) => {
+        let tab2 = (tabs2 || []).find(t => t.url && !t.url.startsWith('chrome-extension://'));
+        if (tab2) return resolve(tab2);
+        
+        // 兜底：获取所有标签页里的活跃飞书页面
+        chrome.tabs.query({}, (allTabs) => {
+          let tab3 = (allTabs || []).find(t => 
+            t.active && t.url && (t.url.includes('feishu.cn') || t.url.includes('larksuite.com') || t.url.includes('larkoffice.com'))
+          );
+          if (tab3) return resolve(tab3);
+          reject(new Error("未找到飞书文档标签页"));
+        });
+      });
+    });
+  });
+}
+
+async function extractSelection() {
+  const tab = await getActiveTab();
+  if (!tab || !tab.id) throw new Error("未找到当前标签页");
+
+  const trySend = () =>
+    new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, { type: "CP_EXTRACT_SELECTION" }, (res) => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve(res);
+      });
+    });
+
+  try {
+    return await trySend();
+  } catch (e) {
+    await new Promise((resolve, reject) => {
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id, allFrames: true }, files: ["content_script.js"] },
+        () => {
+          const err = chrome.runtime.lastError;
+          if (err) reject(new Error(err.message));
+          else resolve();
+        }
+      );
+    });
+    return await trySend();
+  }
+}
+
+async function toggleScrollExtract() {
+  const tab = await getActiveTab();
+  if (!tab || !tab.id) throw new Error("未找到当前标签页");
+
+  const state = await new Promise((resolve, reject) => {
+    chrome.storage.session.get({ scrollState: { running: false } }, (items) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(items.scrollState || { running: false });
+    });
+  });
+
+  const nextRunning = !state.running;
+  const message = { type: nextRunning ? "CP_SCROLL_EXTRACT_START" : "CP_SCROLL_EXTRACT_STOP" };
+  const trySend = () =>
+    new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, message, () => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve();
+      });
+    });
+
+  try {
+    await trySend();
+  } catch (e) {
+    await new Promise((resolve, reject) => {
+      chrome.scripting.executeScript(
+        { target: { tabId: tab.id, allFrames: true }, files: ["content_script.js"] },
+        () => {
+          const err = chrome.runtime.lastError;
+          if (err) reject(new Error(err.message));
+          else resolve();
+        }
+      );
+    });
+    await trySend();
+  }
+}
+
+function setPreview(lines) {
+  els.preview.replaceChildren();
+  const show = (lines || []).slice(0, 8);
+  for (const line of show) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    els.preview.appendChild(li);
+  }
+  if ((lines || []).length > show.length) {
+    const li = document.createElement("li");
+    li.textContent = `… 还有 ${lines.length - show.length} 条`;
+    els.preview.appendChild(li);
+  }
+}
+
+function storageSyncGet(defaults) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.get(defaults, (items) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(items);
+    });
+  });
+}
+
+function storageSyncSet(items) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.set(items, () => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve();
+    });
+  });
+}
+
+function buildRows(extract, mode) {
+  const rowsFrom = globalThis.CopyPasteExporter.rowsFromExtract(extract || {});
+  const lines = Array.isArray(extract?.lines) ? extract.lines : [];
+  const uiLines = Array.isArray(extract?.uiLines) ? extract.uiLines : [];
+  const images = Array.isArray(extract?.images) ? extract.images : [];
+
+  if (mode === "images") {
+    return images.map((img) => ({ text: "", images: [img.src || img], ocrText: img.ocrText || "" }));
+  }
+
+  const baseRows = rowsFrom.length ? rowsFrom : lines.map((t) => ({ text: t, images: [], ocrText: "" }));
+  const filterLines = mode === "ui" && uiLines.length ? uiLines : lines;
+  if (!filterLines.length) return baseRows;
+
+  const set = new Set(filterLines);
+  const filtered = baseRows.filter((r) => set.has(r.text));
+  return filtered.length ? filtered : baseRows;
+}
+
+async function copyAsTable(extract) {
+  const { languages } = await storageSyncGet({ languages: ["en-US"] });
+  const langs = Array.isArray(languages) ? languages.filter(Boolean) : ["en-US"];
+  // 总是重新 build rows，确保获取到最新的 img.ocrText
+  const rows = buildRows(extract, extract.mode || "ui");
+  const html = globalThis.CopyPasteExporter.htmlTableFromRows(rows, langs);
+  const tsv = globalThis.CopyPasteExporter.tsvFromRows(rows, langs);
+
+  if (globalThis.ClipboardItem) {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([tsv], { type: "text/plain" })
+      })
+    ]);
+    return { rows: rows.length, languages: langs };
+  }
+
+  await navigator.clipboard.writeText(tsv);
+  return { rows: rows.length, languages: langs };
+}
+
+async function loadLastExtract() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.get({ lastExtract: null }, (items) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(items.lastExtract || null);
+    });
+  });
+}
+
+async function saveLastExtract(extract) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.session.set({ lastExtract: extract }, () => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve();
+    });
+  });
+}
+
+let globalExtract = null;
+
+function applyExtractToUI(extract) {
+  globalExtract = extract;
+  const rows = Array.isArray(extract?.rows) ? extract.rows : [];
+  const lines = rows.length ? rows.map((r) => r.text) : Array.isArray(extract?.lines) ? extract.lines : [];
+  const images = Array.isArray(extract?.images) ? extract.images : [];
+  els.lineCount.textContent = String(lines.length);
+  els.imageCount.textContent = String(images.length);
+  setPreview(lines);
+  
+  // 渲染图片预览
+  if (els.imagePreview) {
+    els.imagePreview.replaceChildren();
+    for (const img of images) {
+      const src = typeof img === 'string' ? img : img.src;
+      if (!src) continue;
+      const el = document.createElement('img');
+      el.src = src;
+      el.title = typeof img === 'string' ? '' : (img.alt || '');
+      els.imagePreview.appendChild(el);
+    }
+  }
+
+  els.copyBtn.disabled = lines.length === 0 && images.length === 0;
+}
+
+async function init() {
+  const { mode } = await storageSyncGet({ mode: "ui" });
+  els.modeSelect.value = mode || "ui";
+  const last = await loadLastExtract();
+  if (last) applyExtractToUI(last);
+  await refreshScrollState();
+}
+
+async function refreshScrollState() {
+  const state = await new Promise((resolve, reject) => {
+    chrome.storage.session.get({ scrollState: { running: false } }, (items) => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(items.scrollState || { running: false });
+    });
+  });
+  if (!els.scrollBtn) return;
+  els.scrollBtn.textContent = state.running ? "停止滚动提取" : "开始滚动提取";
+  els.scrollBtn.classList.toggle("danger", state.running);
+}
+
+els.clipboardExtractBtn?.addEventListener("click", async () => {
+  setStatus("正在读取剪贴板…");
+  els.clipboardExtractBtn.disabled = true;
+  try {
+    // 1. 读取剪贴板内容
+    const items = await navigator.clipboard.read();
+    let htmlContent = "";
+    let textContent = "";
+    
+    for (const item of items) {
+      if (item.types.includes("text/html")) {
+        const blob = await item.getType("text/html");
+        htmlContent = await blob.text();
+      }
+      if (item.types.includes("text/plain")) {
+        const blob = await item.getType("text/plain");
+        textContent = await blob.text();
+      }
+    }
+
+    if (!htmlContent && !textContent) {
+      throw new Error("剪贴板为空，请先在飞书里框选并按 Command+C 复制");
+    }
+
+    // 2. 将提取任务发给 background 处理（利用现有的合并逻辑）
+    const extractMode = els.modeSelect.value || "ui";
+    const res = await chrome.runtime.sendMessage({
+      type: "CP_PROCESS_CLIPBOARD",
+      payload: { html: htmlContent, text: textContent, mode: extractMode }
+    });
+
+    if (!res || !res.ok) {
+      throw new Error(res?.error || "处理剪贴板数据失败");
+    }
+
+    applyExtractToUI(res.data);
+    setStatus("剪贴板提取成功！", "ok");
+  } catch (e) {
+    setStatus(String(e && e.message ? e.message : e), "error");
+  } finally {
+    els.clipboardExtractBtn.disabled = false;
+  }
+});
+
+els.extractBtn.addEventListener("click", async () => {
+  setStatus("提取中…");
+  els.extractBtn.disabled = true;
+  try {
+    const mode = els.modeSelect.value || "ui";
+    await storageSyncSet({ mode });
+    const res = await extractSelection();
+    if (!res || !res.ok) throw new Error(res?.error || "提取失败");
+    const rows = buildRows(res, mode);
+    const payload = { ...res, rows, mode };
+    await saveLastExtract(payload);
+    applyExtractToUI(payload);
+    setStatus("已提取，可复制为表格", "ok");
+  } catch (e) {
+    setStatus(String(e && e.message ? e.message : e), "error");
+  } finally {
+    els.extractBtn.disabled = false;
+  }
+});
+
+els.scrollBtn?.addEventListener("click", async () => {
+  setStatus("切换滚动中…");
+  els.scrollBtn.disabled = true;
+  try {
+    await toggleScrollExtract();
+    await refreshScrollState();
+    setStatus("滚动提取已切换", "ok");
+  } catch (e) {
+    setStatus(String(e && e.message ? e.message : e), "error");
+  } finally {
+    els.scrollBtn.disabled = false;
+  }
+});
+
+els.copyBtn.addEventListener("click", async () => {
+  setStatus("复制中… (如果包含 OCR 可能需要几秒钟)");
+  els.copyBtn.disabled = true;
+  try {
+    const extract = globalExtract || await loadLastExtract();
+    if (!extract) throw new Error("没有可复制的数据，请先提取选中内容");
+
+      // 提前把所有提取出来的图片转为 Base64（不管需不需要 OCR），以保证复制出来的都是安全格式
+      setStatus("正在预处理图片格式，请稍候...");
+      for (const img of extract.images) {
+        if (!img.base64 && typeof img !== 'string' && img.src) {
+           try {
+             const fetchRes = await chrome.runtime.sendMessage({ type: "CP_FETCH_IMAGE", url: img.src });
+             if (fetchRes && fetchRes.ok && fetchRes.dataUrl) {
+               img.base64 = fetchRes.dataUrl;
+             }
+           } catch(e) {
+             console.log("获取 base64 失败", e);
+           }
+        }
+      }
+
+      // 检查是否有配置高级大模型 OCR 接口，如果没有，使用内置的兜底配置
+      const settings = await new Promise(resolve => {
+        chrome.storage.sync.get(["ocrApiUrl", "ocrApiModel", "ocrApiKey"], resolve);
+      });
+      
+      // 内置的默认 API 配置 (请替换为你自己的真实 ep 和 key)
+      const defaultApiUrl = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+      const defaultApiModel = "ep-20241029135012-68vmd"; // 示例 ep，你需要换成真实的 Doubao-vision-pro
+      const defaultApiKey = "f9a4b3d7-1234-5678-abcd-ef0123456789"; // 示例 key，你需要换成真实的 key
+
+      const apiUrl = settings.ocrApiUrl || defaultApiUrl;
+      const apiModel = settings.ocrApiModel || defaultApiModel;
+      const apiKey = settings.ocrApiKey || defaultApiKey;
+      
+      const hasLlmConfig = !!(apiUrl && apiModel && apiKey);
+
+      // 如果启用了 OCR，我们在复制前把图片送去识别
+      if ((hasLlmConfig || typeof Tesseract !== 'undefined') && extract.images && extract.images.length > 0) {
+        setStatus(`正在进行图片 OCR 识别 (${hasLlmConfig ? '大模型云端识别' : '本地模型首次需下载'})...`);
+        for (const img of extract.images) {
+           if (!img.ocrText || img.ocrText === "等待OCR...") {
+              try {
+                 const fetchRes = { ok: true, dataUrl: img.base64 };
+                 if (!fetchRes.dataUrl) {
+                    img.ocrText = "无图片数据";
+                    continue;
+                 }
+                 
+                 if (hasLlmConfig) {
+                    // 走高级大模型接口
+                    try {
+                      const res = await chrome.runtime.sendMessage({
+                        type: "CP_OCR_LLM",
+                        payload: {
+                          base64Image: fetchRes.dataUrl,
+                          apiUrl: apiUrl,
+                          apiModel: apiModel,
+                          apiKey: apiKey
+                        }
+                      });
+                      if (res && res.ok && res.text) {
+                         img.ocrText = res.text.replace(/\n/g, " ");
+                      } else {
+                         img.ocrText = `API失败: ${res?.error || "未知"}`;
+                      }
+                    } catch(apiErr) {
+                      img.ocrText = "API请求异常";
+                    }
+                 } else {
+                    // 走本地 Tesseract 兜底
+                    const ocrPromise = Tesseract.recognize(fetchRes.dataUrl, 'chi_sim+eng');
+                    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('本地OCR超时')), 20000));
+                    
+                    const result = await Promise.race([ocrPromise, timeoutPromise]);
+                    img.ocrText = result && result.data && result.data.text ? result.data.text.replace(/\n/g, " ") : "识别为空";
+                 }
+              } catch(e) {
+                 console.error("OCR 失败", e);
+                 img.ocrText = typeof e.message === 'string' ? `失败: ${e.message.substring(0,10)}` : "OCR出错";
+              }
+           }
+        }
+      }
+
+    const res = await copyAsTable(extract);
+    setStatus(`已复制：${res.rows} 条，请直接去飞书粘贴`, "ok");
+  } catch (e) {
+    setStatus(String(e && e.message ? e.message : e), "error");
+  } finally {
+    els.copyBtn.disabled = false;
+  }
+});
+
+els.resetBtn?.addEventListener("click", async () => {
+  try {
+    await saveLastExtract(null);
+    applyExtractToUI(null);
+    setStatus("已重置清空", "ok");
+  } catch (e) {
+    setStatus(String(e && e.message ? e.message : e), "error");
+  }
+});
+
+init();
+
+chrome.storage.session.onChanged.addListener((changes) => {
+  if (changes.lastExtract && changes.lastExtract.newValue) {
+    applyExtractToUI(changes.lastExtract.newValue);
+    setStatus("已提取最新内容", "ok");
+  }
+  if (changes.scrollState && changes.scrollState.newValue) {
+    if (els.scrollBtn) {
+      const running = changes.scrollState.newValue.running;
+      els.scrollBtn.textContent = running ? "停止滚动提取" : "开始滚动提取";
+      els.scrollBtn.classList.toggle("danger", running);
+    }
+  }
+});

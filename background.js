@@ -1,0 +1,325 @@
+const MENU_EXTRACT = "cp_extract_selection";
+const MENU_SCROLL_START = "cp_scroll_start";
+const MENU_SCROLL_STOP = "cp_scroll_stop";
+
+function ensureDefaults() {
+  chrome.storage.sync.get({ languages: ["en-US"] }, (existing) => {
+    const langs = existing && Array.isArray(existing.languages) ? existing.languages : [];
+    if (langs.length > 0) return;
+    chrome.storage.sync.set({ languages: ["en-US"] });
+  });
+}
+
+function ensureMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_EXTRACT,
+      title: "CopyPaste：提取选区",
+      contexts: ["selection"]
+    });
+    chrome.contextMenus.create({
+      id: MENU_SCROLL_START,
+      title: "CopyPaste：开始滚动提取",
+      contexts: ["page"]
+    });
+    chrome.contextMenus.create({
+      id: MENU_SCROLL_STOP,
+      title: "CopyPaste：停止滚动提取",
+      contexts: ["page"]
+    });
+  });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureDefaults();
+  ensureMenus();
+  if (chrome.sidePanel) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+  }
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  ensureMenus();
+});
+
+function injectThenSend(tabId, message) {
+  const inject = () =>
+    new Promise((resolve, reject) => {
+      chrome.scripting.executeScript(
+        { target: { tabId, allFrames: true }, files: ["content_script.js"] },
+        () => {
+          const err = chrome.runtime.lastError;
+          if (err) reject(new Error(err.message));
+          else resolve();
+        }
+      );
+    });
+
+  const send = () =>
+    new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tabId, message, (res) => {
+        const err = chrome.runtime.lastError;
+        if (err) reject(new Error(err.message));
+        else resolve(res);
+      });
+    });
+
+  return send().catch(async () => {
+    await inject();
+    return send();
+  });
+}
+
+async function extractToSession(tabId) {
+  const res = await injectThenSend(tabId, { type: "CP_EXTRACT_SELECTION" });
+  if (!res || !res.ok) throw new Error(res?.error || "提取失败");
+
+  await new Promise((resolve, reject) => {
+    chrome.storage.session.set({ lastExtract: res }, () => {
+      const err = chrome.runtime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve();
+    });
+  });
+
+  chrome.action.setBadgeText({ tabId, text: "OK" });
+  chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" });
+}
+
+async function startScrollToSession(tabId) {
+  await injectThenSend(tabId, { type: "CP_SCROLL_EXTRACT_START" });
+  chrome.storage.session.set({ scrollState: { running: true } });
+  chrome.action.setBadgeText({ tabId, text: "RUN" });
+  chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" });
+}
+
+async function stopScroll(tabId) {
+  await injectThenSend(tabId, { type: "CP_SCROLL_EXTRACT_STOP" });
+  chrome.storage.session.set({ scrollState: { running: false } });
+  chrome.action.setBadgeText({ tabId, text: "" });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (!tab?.id) return;
+  if (info.menuItemId === MENU_EXTRACT) {
+    extractToSession(tab.id).catch(() => {
+      chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: "#b91c1c" });
+    });
+    return;
+  }
+  if (info.menuItemId === MENU_SCROLL_START) {
+    startScrollToSession(tab.id).catch(() => {
+      chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: "#b91c1c" });
+    });
+    return;
+  }
+  if (info.menuItemId === MENU_SCROLL_STOP) {
+    stopScroll(tab.id).catch(() => {
+      chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: "#b91c1c" });
+    });
+  }
+});
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command !== "cp_extract_selection") return;
+  if (!tab?.id) return;
+  extractToSession(tab.id).catch(() => {
+    chrome.action.setBadgeText({ tabId: tab.id, text: "ERR" });
+    chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: "#b91c1c" });
+  });
+});
+
+let tabImageCache = {};
+
+// 监听并拦截所有的网络请求，抓出里面藏着的图片链接
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    if (details.tabId < 0) return;
+    const url = details.url;
+    
+    // 拦截飞书特有的图片流接口和常规图片
+    if (url.includes('space/api/box/stream/download') || 
+        url.includes('internal-api-drive-stream') ||
+        details.type === 'image') {
+        
+        // 过滤头像和图标
+        if (url.includes('avatar') || url.includes('icon') || url.includes('emoji')) return;
+
+        if (!tabImageCache[details.tabId]) {
+          tabImageCache[details.tabId] = new Set();
+        }
+        tabImageCache[details.tabId].add(url);
+    }
+  },
+  { urls: ["*://*.feishu.cn/*", "*://*.larksuite.com/*", "*://*.larkoffice.com/*"] }
+);
+
+// 清理关闭的标签页缓存
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabImageCache[tabId];
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || typeof msg !== "object") return;
+
+  if (msg.type === "GET_CACHED_IMAGES") {
+    const tabId = sender.tab ? sender.tab.id : msg.tabId;
+    const urls = tabImageCache[tabId] ? Array.from(tabImageCache[tabId]) : [];
+    sendResponse({ urls });
+    return true;
+  }
+
+  if (msg.type === "CP_SCROLL_EXTRACT_UPDATE") {
+    chrome.storage.session.set(
+      { lastExtract: msg.payload, scrollState: msg.state },
+      () => sendResponse({ ok: true })
+    );
+    return true;
+  }
+  if (msg.type === "CP_SCROLL_EXTRACT_DONE") {
+    chrome.storage.session.set(
+      { lastExtract: msg.payload, scrollState: { running: false } },
+      () => sendResponse({ ok: true })
+    );
+    return true;
+  }
+
+  if (msg.type === "CP_PROCESS_CLIPBOARD") {
+    handleClipboardExtract(msg.payload).then(data => {
+      sendResponse({ ok: true, data });
+    }).catch(err => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "CP_FETCH_IMAGE") {
+    // 飞书图片的 URL 可能有重定向或鉴权，这里直接加上 fetch 的凭证并忽略 cors 报错
+    fetch(msg.url, { credentials: 'omit', mode: 'no-cors' })
+      .then(res => res.blob())
+      .then(blob => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          sendResponse({ ok: true, dataUrl: reader.result });
+        };
+        reader.readAsDataURL(blob);
+      })
+      .catch(err => {
+        sendResponse({ ok: false, error: err.message });
+      });
+    return true;
+  }
+
+  if (msg.type === "CP_OCR_LLM") {
+    handleLLMOCR(msg.payload).then(res => {
+      sendResponse({ ok: true, text: res });
+    }).catch(err => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+});
+
+async function handleLLMOCR({ base64Image, apiUrl, apiModel, apiKey }) {
+  // 去除 data:image/png;base64, 前缀
+  const base64Data = base64Image.split(',')[1] || base64Image;
+  
+  const payload = {
+    model: apiModel,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "请提取这张图片中的所有文案文字，只需要返回提取到的纯文本，不需要任何其他描述或格式化标记。如果图片中没有文字，请回复'无文字'。" },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+        ]
+      }
+    ]
+  };
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`API Error ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+    return data.choices[0].message.content;
+  }
+  throw new Error("Invalid API response format");
+}
+
+// 处理剪贴板 HTML/Text 数据
+async function handleClipboardExtract({ html, text, mode }) {
+  // 1. 解析纯文本
+  const rawText = text || "";
+  const lines = rawText.split(/\n+/g).map(s => s.trim()).filter(Boolean);
+  
+  // 简单模拟 guessUiLines (因为 background 无法访问 DOM)
+  const uiLines = lines.filter(s => {
+    if (s.length > 120) return false;
+    if (/^https?:\/\//i.test(s)) return false;
+    if (/^(?:模块|方案|背景|目标|范围|说明|备注|结论|实现|设计|流程)\b/.test(s)) return false;
+    return true;
+  });
+
+  // 2. 解析 HTML 中的图片
+  const images = [];
+  if (html) {
+    // 粗暴的正则匹配找出所有 img src
+    const imgRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+    let match;
+    const seen = new Set();
+    while ((match = imgRegex.exec(html)) !== null) {
+      let src = match[1];
+      // 飞书有时在 src 里放占位符，真实链接在 data-src
+      if (src.includes('base64,PHN2Zy')) continue; 
+      
+      if (!seen.has(src)) {
+        seen.add(src);
+        images.push({ src, alt: "剪贴板图片" });
+      }
+    }
+    
+    // 如果 img 没抓够，找 data-src
+    const dataSrcRegex = /data-src=["']([^"']+)["']/gi;
+    while ((match = dataSrcRegex.exec(html)) !== null) {
+      let src = match[1];
+      if (!seen.has(src)) {
+        seen.add(src);
+        images.push({ src, alt: "剪贴板图片" });
+      }
+    }
+  }
+
+  const result = {
+    ok: true,
+    lines,
+    uiLines,
+    images
+  };
+
+  // 模拟之前的内容合并逻辑，把它存入 session
+  const stored = await chrome.storage.session.get("lastExtract");
+  let merged = stored.lastExtract || { lines: [], uiLines: [], images: [] };
+  
+  merged.lines = merged.lines.concat(lines);
+  merged.uiLines = merged.uiLines.concat(uiLines);
+  merged.images = merged.images.concat(images);
+
+  await chrome.storage.session.set({ lastExtract: merged });
+
+  return merged;
+}
