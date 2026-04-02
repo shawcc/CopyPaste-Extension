@@ -32,8 +32,18 @@ const FEATURE_DATA = {
     { label: " ", value: "orange", bg: "#ff9900" },
     { label: " ", value: "yellow", bg: "#ffcc00" },
     { label: " ", value: "green", bg: "#00b42a" },
+    { label: " ", value: "cyan", bg: "#14c9c9" },
     { label: " ", value: "blue", bg: "#165dff" },
-    { label: " ", value: "purple", bg: "#722ed1" }
+    { label: " ", value: "purple", bg: "#722ed1" },
+    { label: " ", value: "pink", bg: "#f5319d" },
+    // 浅色背景组
+    { label: " ", value: "light_gray", bg: "#f2f3f5" },
+    { label: " ", value: "light_red", bg: "#ffece8" },
+    { label: " ", value: "light_orange", bg: "#fff3e8" },
+    { label: " ", value: "light_yellow", bg: "#ffffcc" },
+    { label: " ", value: "light_green", bg: "#e8ffea" },
+    { label: " ", value: "light_blue", bg: "#e8f3ff" },
+    { label: " ", value: "light_purple", bg: "#f5e8ff" }
   ],
   specialStyle: [
     { label: "全选", value: "all" },
@@ -134,21 +144,52 @@ function parseRichText(html, text) {
 }
 
 // 颜色归类辅助
-function categorizeColor(rgbStr) {
+function categorizeColor(rgbStr, isBg = false) {
   if (!rgbStr) return 'all';
-  const match = rgbStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  // 处理飞书可能会用 rgba 或者 rgb
+  const match = rgbStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (!match) return 'all';
   const r = parseInt(match[1]);
   const g = parseInt(match[2]);
   const b = parseInt(match[3]);
   
-  if (r > 200 && g < 100 && b < 100) return 'red';
-  if (r > 200 && g > 100 && g < 200 && b < 100) return 'orange';
-  if (r > 200 && g > 180 && b < 100) return 'yellow';
-  if (r < 100 && g > 150 && b < 100) return 'green';
-  if (r < 100 && g < 150 && b > 200) return 'blue';
-  if (r > 100 && g < 100 && b > 150) return 'purple';
-  if (r === g && g === b && r < 200 && r > 100) return 'gray';
+  // 转换成 HSL 以便更精准地判断颜色类型
+  const rNorm = r / 255;
+  const gNorm = g / 255;
+  const bNorm = b / 255;
+  const max = Math.max(rNorm, gNorm, bNorm);
+  const min = Math.min(rNorm, gNorm, bNorm);
+  let h = 0;
+  
+  if (max !== min) {
+    if (max === rNorm) h = (gNorm - bNorm) / (max - min) + (gNorm < bNorm ? 6 : 0);
+    else if (max === gNorm) h = (bNorm - rNorm) / (max - min) + 2;
+    else h = (rNorm - gNorm) / (max - min) + 4;
+    h *= 60;
+  }
+  
+  const l = (max + min) / 2;
+  const s = max === min ? 0 : l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+  
+  // 判断灰度
+  if (s < 0.1 || (r > 240 && g > 240 && b > 240)) {
+    // 纯白不当做有颜色
+    if (r > 245 && g > 245 && b > 245) return 'all';
+    return isBg && l > 0.9 ? 'light_gray' : 'gray';
+  }
+  
+  // 根据亮度区分深浅色背景
+  const isLight = l > 0.85;
+
+  if (h < 15 || h >= 345) return isBg && isLight ? 'light_red' : 'red';
+  if (h >= 15 && h < 45) return isBg && isLight ? 'light_orange' : 'orange';
+  if (h >= 45 && h < 75) return isBg && isLight ? 'light_yellow' : 'yellow';
+  if (h >= 75 && h < 165) return isBg && isLight ? 'light_green' : 'green';
+  if (h >= 165 && h < 210) return 'cyan'; // cyan 通常不分深浅
+  if (h >= 210 && h < 265) return isBg && isLight ? 'light_blue' : 'blue';
+  if (h >= 265 && h < 315) return isBg && isLight ? 'light_purple' : 'purple';
+  if (h >= 315 && h < 345) return 'pink';
+
   return 'all';
 }
 
@@ -165,10 +206,10 @@ function filterByFeature(richLines) {
       if (currentFeatureValue === "quote") return r.quote;
     }
     if (currentFeatureType === "fontColor") {
-      return r.colors && r.colors.some(c => categorizeColor(c) === currentFeatureValue);
+      return r.colors && r.colors.some(c => categorizeColor(c, false) === currentFeatureValue);
     }
     if (currentFeatureType === "bgColor") {
-      return r.bgs && r.bgs.some(c => categorizeColor(c) === currentFeatureValue);
+      return r.bgs && r.bgs.some(c => categorizeColor(c, true) === currentFeatureValue);
     }
     return true;
   });
