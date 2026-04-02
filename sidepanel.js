@@ -1,4 +1,5 @@
 const els = {
+  modeSelect: document.getElementById("modeSelect"),
   clipboardExtractBtn: document.getElementById("clipboardExtractBtn"),
   copyBtn: document.getElementById("copyBtn"),
   resetBtn: document.getElementById("resetBtn"),
@@ -78,7 +79,8 @@ function storageSyncSet(items) {
 }
 
 function buildRows(extract) {
-  return globalThis.CopyPasteExporter.rowsFromExtract(extract || {});
+  const mode = els.modeSelect ? els.modeSelect.value : "image_first";
+  return globalThis.CopyPasteExporter.rowsFromExtract(extract || {}, mode);
 }
 
 async function copyAsTable(extract) {
@@ -125,14 +127,19 @@ async function saveLastExtract(extract) {
 
 let globalExtract = null;
 
-function applyExtractToUI(extract) {
+function applyExtractToUI(extract, modeOverride) {
   globalExtract = extract;
-  const rows = Array.isArray(extract?.rows) ? extract.rows : [];
-  const lines = rows.length ? rows.map((r) => r.text) : Array.isArray(extract?.lines) ? extract.lines : [];
+  const mode = modeOverride || (els.modeSelect ? els.modeSelect.value : "image_first");
+  
+  const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
+  
+  // 无论哪种模式，预览界面都经过 guessUiLines 过滤，避免显示 "模块"、"详细描述" 等无关文案
+  const displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+  
   const images = Array.isArray(extract?.images) ? extract.images : [];
-  els.lineCount.textContent = String(lines.length);
+  els.lineCount.textContent = String(displayLines.length);
   els.imageCount.textContent = String(images.length);
-  setPreview(lines);
+  setPreview(displayLines);
   
   // 渲染图片预览
   if (els.imagePreview) {
@@ -147,13 +154,24 @@ function applyExtractToUI(extract) {
     }
   }
 
-  els.copyBtn.disabled = lines.length === 0 && images.length === 0;
+  els.copyBtn.disabled = displayLines.length === 0 && images.length === 0;
 }
 
 async function init() {
+  const { mode } = await storageSyncGet({ mode: "image_first" });
+  if (els.modeSelect) els.modeSelect.value = mode || "image_first";
+  
   const last = await loadLastExtract();
-  if (last) applyExtractToUI(last);
+  if (last) applyExtractToUI(last, mode || "image_first");
 }
+
+els.modeSelect?.addEventListener("change", async () => {
+  const mode = els.modeSelect.value;
+  await storageSyncSet({ mode });
+  if (globalExtract) {
+    applyExtractToUI(globalExtract, mode);
+  }
+});
 
 // Remove unused functions
 // (extractSelection, toggleScrollExtract, refreshScrollState have been removed)

@@ -14,6 +14,13 @@
       </header>
 
       <section class="card">
+        <div class="row" style="margin-bottom: 12px;">
+          <label class="label" for="modeSelect">提取模式</label>
+          <select id="modeSelect" class="select">
+            <option value="image_first">模式1: 以图找文 (据图OCR匹配文案)</option>
+            <option value="text_first">模式2: 以文找图 (据文案特征匹配图)</option>
+          </select>
+        </div>
         <button id="clipboardExtractBtn" class="btn primary">从剪贴板提取 (推荐)</button>
         <button id="copyBtn" class="btn" disabled>复制为表格（可粘贴到飞书）</button>
         <button id="resetBtn" class="btn danger">重置清空</button>

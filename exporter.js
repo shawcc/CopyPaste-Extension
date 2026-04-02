@@ -19,6 +19,20 @@
     return String(n).padStart(3, "0");
   }
 
+  function guessUiLines(lines) {
+    return lines.filter(s => {
+      if (!s) return false;
+      if (s.length > 50) return false; // 太长的一般不是UI文案
+      if (/^https?:\/\//i.test(s)) return false; // 网址
+      if (/^[0-9]+[\.、]\s/.test(s)) return false; // 列表 1. xxx
+      if (/^[-*•]\s/.test(s)) return false; // 列表 - xxx
+      if (/[。；！]$/.test(s)) return false; // 句号结尾的一般是描述段落
+      if (/^(?:模块|方案|背景|目标|范围|说明|备注|结论|实现|设计|流程|交互|逻辑|规则|前提|限制|版本|记录|字段|状态|付费管理)\b/.test(s)) return false;
+      if (/^[-—]+$/.test(s)) return false; // 分割线
+      return true;
+    });
+  }
+
   function getSimilarity(s1, s2) {
     if (!s1 || !s2) return 0;
     if (s1 === s2) return 1;
@@ -35,14 +49,51 @@
     return intersection / Math.max(set1.size, set2.size);
   }
 
-  function rowsFromExtract(extract) {
+  function rowsFromExtract(extract, mode) {
     const lines = Array.isArray(extract?.lines) ? extract.lines : [];
     const images = Array.isArray(extract?.images) ? extract.images : [];
     const rows = [];
     
-    // 如果没有图片，把文档里的文案全部列出来（不做过滤，因为没有 OCR 对比依据）
+    if (mode === "text_first") {
+      const uiLines = guessUiLines(lines);
+      const seenImages = new Set();
+      
+      for (let i = 0; i < uiLines.length; i++) {
+        const uiLine = uiLines[i];
+        let bestImg = null;
+        let bestScore = 0;
+        let bestOcrSegment = "";
+
+        for (const img of images) {
+          const ocrTextRaw = img.ocrText || "";
+          const ocrSegments = ocrTextRaw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+          
+          for (const seg of ocrSegments) {
+            const score = getSimilarity(uiLine, seg);
+            if (score > bestScore && score > 0.3) {
+              bestScore = score;
+              bestImg = img;
+              bestOcrSegment = seg;
+            }
+          }
+        }
+
+        const imgsToOutput = (bestImg && !seenImages.has(bestImg)) ? [bestImg] : [];
+        if (bestImg) seenImages.add(bestImg);
+
+        rows.push({
+          text: uiLine,
+          images: imgsToOutput,
+          ocrText: bestOcrSegment || ""
+        });
+      }
+      return rows;
+    }
+
+    // mode === "image_first" 或默认
+    // 如果没有图片，把文档里的文案全部列出来（用特征过滤一下，免得太多废话）
     if (!images || images.length === 0) {
-      return lines.map(text => ({ text, images: [], ocrText: "" }));
+      return guessUiLines(lines).map(text => ({ text, images: [], ocrText: "" }));
     }
 
     // 复制一份 PRD 里提取到的所有文案，作为匹配池
@@ -162,6 +213,6 @@
     return lines.join("\n");
   }
 
-  return { rowsFromExtract, htmlTableFromRows, tsvFromRows };
+  return { rowsFromExtract, htmlTableFromRows, tsvFromRows, guessUiLines };
 });
 
