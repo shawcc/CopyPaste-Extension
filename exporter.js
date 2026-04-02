@@ -49,13 +49,12 @@
     return intersection / Math.max(set1.size, set2.size);
   }
 
-  function rowsFromExtract(extract, mode) {
-    const lines = Array.isArray(extract?.lines) ? extract.lines : [];
+  function rowsFromExtract(extract, mode, displayLines) {
     const images = Array.isArray(extract?.images) ? extract.images : [];
     const rows = [];
     
     if (mode === "text_first") {
-      const uiLines = guessUiLines(lines);
+      const uiLines = displayLines || [];
       const seenImages = new Set();
       
       for (let i = 0; i < uiLines.length; i++) {
@@ -93,11 +92,11 @@
     // mode === "image_first" 或默认
     // 如果没有图片，把文档里的文案全部列出来（用特征过滤一下，免得太多废话）
     if (!images || images.length === 0) {
-      return guessUiLines(lines).map(text => ({ text, images: [], ocrText: "" }));
+      return (displayLines || []).map(text => ({ text, images: [], ocrText: "" }));
     }
 
     // 复制一份 PRD 里提取到的所有文案，作为匹配池
-    let remainingPrdLines = [...lines];
+    let remainingPrdLines = [...(displayLines || [])];
 
     for (let i = 0; i < images.length; i++) {
       const img = images[i];

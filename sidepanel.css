@@ -95,9 +95,73 @@ body {
 }
 
 .tip {
+  margin-top: 12px;
   font-size: 12px;
   color: #6b7280;
-  line-height: 1.4;
+  line-height: 1.5;
+}
+
+/* Feature Filter UI Styles */
+.feature-filter {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.feature-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.feature-btn {
+  padding: 4px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  color: #374151;
+  transition: all 0.2s;
+}
+
+.feature-btn:hover {
+  border-color: #9ca3af;
+}
+
+.feature-btn.active {
+  border-color: #2563eb;
+  color: #2563eb;
+  background: #eff6ff;
+  font-weight: 500;
+}
+
+.feature-color-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.feature-color-btn:hover {
+  border-color: #9ca3af;
+}
+
+.feature-color-btn.active {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+  border-color: transparent;
 }
 
 .meta {

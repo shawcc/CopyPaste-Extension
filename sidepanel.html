@@ -21,6 +21,20 @@
             <option value="text_first">模式2: 以文找图 (据文案特征匹配图)</option>
           </select>
         </div>
+        
+        <!-- 新增特征过滤器 UI (仅在模式2显示) -->
+        <div id="featureFilter" class="feature-filter" style="display: none;">
+          <div class="row">
+            <label class="label" for="featureType" style="width: 70px;">选择特征</label>
+            <select id="featureType" class="select" style="flex: 1;">
+              <option value="fontColor">字体颜色</option>
+              <option value="bgColor">背景颜色</option>
+              <option value="specialStyle">特殊样式</option>
+            </select>
+          </div>
+          <div id="featureOptions" class="feature-options"></div>
+        </div>
+
         <button id="clipboardExtractBtn" class="btn primary">从剪贴板提取 (推荐)</button>
         <button id="copyBtn" class="btn" disabled>复制为表格（可粘贴到飞书）</button>
         <button id="resetBtn" class="btn danger">重置清空</button>

@@ -1,5 +1,8 @@
 const els = {
   modeSelect: document.getElementById("modeSelect"),
+  featureType: document.getElementById("featureType"),
+  featureOptions: document.getElementById("featureOptions"),
+  featureFilter: document.getElementById("featureFilter"),
   clipboardExtractBtn: document.getElementById("clipboardExtractBtn"),
   copyBtn: document.getElementById("copyBtn"),
   resetBtn: document.getElementById("resetBtn"),
@@ -9,6 +12,168 @@ const els = {
   preview: document.getElementById("preview"),
   imagePreview: document.getElementById("imagePreview")
 };
+
+// --- 特征选择器逻辑 ---
+const FEATURE_DATA = {
+  fontColor: [
+    { label: "全", value: "all", color: "#333" },
+    { label: "A", value: "gray", color: "#8f959e" },
+    { label: "A", value: "red", color: "#d83931" },
+    { label: "A", value: "orange", color: "#de7802" },
+    { label: "A", value: "yellow", color: "#dc9b04" },
+    { label: "A", value: "green", color: "#2ea121" },
+    { label: "A", value: "blue", color: "#245bce" },
+    { label: "A", value: "purple", color: "#6425d0" }
+  ],
+  bgColor: [
+    { label: "全", value: "all", bg: "transparent" },
+    { label: " ", value: "gray", bg: "#dee0e3" },
+    { label: " ", value: "red", bg: "#f56c6c" },
+    { label: " ", value: "orange", bg: "#ff9900" },
+    { label: " ", value: "yellow", bg: "#ffcc00" },
+    { label: " ", value: "green", bg: "#00b42a" },
+    { label: " ", value: "blue", bg: "#165dff" },
+    { label: " ", value: "purple", bg: "#722ed1" }
+  ],
+  specialStyle: [
+    { label: "全选", value: "all" },
+    { label: "粗体", value: "bold" },
+    { label: "斜体", value: "italic" },
+    { label: "下划线", value: "underline" },
+    { label: "代码", value: "code" },
+    { label: "“引号”", value: "quote" }
+  ]
+};
+
+let currentFeatureType = "fontColor";
+let currentFeatureValue = "all";
+
+function renderFeatureOptions() {
+  if (!els.featureOptions) return;
+  els.featureOptions.innerHTML = "";
+  const options = FEATURE_DATA[currentFeatureType];
+  
+  options.forEach(opt => {
+    const btn = document.createElement("button");
+    btn.className = currentFeatureType === "specialStyle" ? "feature-btn" : "feature-color-btn";
+    if (opt.value === currentFeatureValue) btn.classList.add("active");
+    
+    btn.textContent = opt.label;
+    if (currentFeatureType === "fontColor" && opt.value !== "all") {
+      btn.style.color = opt.color;
+    }
+    if (currentFeatureType === "bgColor" && opt.value !== "all") {
+      btn.style.backgroundColor = opt.bg;
+    }
+    
+    btn.onclick = () => {
+      currentFeatureValue = opt.value;
+      renderFeatureOptions();
+      if (globalExtract) applyExtractToUI(globalExtract);
+    };
+    els.featureOptions.appendChild(btn);
+  });
+}
+
+els.featureType?.addEventListener("change", (e) => {
+  currentFeatureType = e.target.value;
+  currentFeatureValue = "all";
+  renderFeatureOptions();
+  if (globalExtract) applyExtractToUI(globalExtract);
+});
+
+// 解析富文本，提取格式特征
+function parseRichText(html, text) {
+  if (!html) return text.split(/\n+/).map(t => ({ text: t.trim() })).filter(t => t.text);
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const results = [];
+  const blocks = doc.querySelectorAll('p, div, td, li, h1, h2, h3, h4, h5, h6');
+  
+  const seen = new Set();
+  blocks.forEach(block => {
+    const hasBlockChild = Array.from(block.children).some(c => 
+      ['P', 'DIV', 'TD', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'TABLE', 'TR', 'TBODY'].includes(c.tagName)
+    );
+    if (hasBlockChild) return;
+    
+    const blockText = block.textContent.trim();
+    if (!blockText || seen.has(blockText)) return;
+    seen.add(blockText);
+    
+    const styles = { color: [], bg: [], bold: false, italic: false, underline: false, code: false, quote: /["“”]/.test(blockText) };
+    
+    const subEls = [block, ...block.querySelectorAll('*')];
+    subEls.forEach(el => {
+      const st = el.style;
+      if (st.color) styles.color.push(st.color);
+      if (st.backgroundColor) styles.bg.push(st.backgroundColor);
+      
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'b' || tag === 'strong' || st.fontWeight === 'bold' || parseInt(st.fontWeight) >= 600) styles.bold = true;
+      if (tag === 'i' || tag === 'em' || st.fontStyle === 'italic') styles.italic = true;
+      if (tag === 'u' || (st.textDecoration && st.textDecoration.includes('underline'))) styles.underline = true;
+      if (tag === 'code' || el.classList.contains('code')) styles.code = true;
+    });
+    
+    results.push({
+      text: blockText,
+      colors: styles.color,
+      bgs: styles.bg,
+      bold: styles.bold,
+      italic: styles.italic,
+      underline: styles.underline,
+      code: styles.code,
+      quote: styles.quote
+    });
+  });
+  
+  if (results.length === 0) {
+    return text.split(/\n+/).map(t => ({ text: t.trim() })).filter(t => t.text);
+  }
+  return results;
+}
+
+// 颜色归类辅助
+function categorizeColor(rgbStr) {
+  if (!rgbStr) return 'all';
+  const match = rgbStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (!match) return 'all';
+  const r = parseInt(match[1]);
+  const g = parseInt(match[2]);
+  const b = parseInt(match[3]);
+  
+  if (r > 200 && g < 100 && b < 100) return 'red';
+  if (r > 200 && g > 100 && g < 200 && b < 100) return 'orange';
+  if (r > 200 && g > 180 && b < 100) return 'yellow';
+  if (r < 100 && g > 150 && b < 100) return 'green';
+  if (r < 100 && g < 150 && b > 200) return 'blue';
+  if (r > 100 && g < 100 && b > 150) return 'purple';
+  if (r === g && g === b && r < 200 && r > 100) return 'gray';
+  return 'all';
+}
+
+function filterByFeature(richLines) {
+  if (currentFeatureValue === "all") return richLines;
+  
+  return richLines.filter(r => {
+    if (!r) return false;
+    if (currentFeatureType === "specialStyle") {
+      if (currentFeatureValue === "bold") return r.bold;
+      if (currentFeatureValue === "italic") return r.italic;
+      if (currentFeatureValue === "underline") return r.underline;
+      if (currentFeatureValue === "code") return r.code;
+      if (currentFeatureValue === "quote") return r.quote;
+    }
+    if (currentFeatureType === "fontColor") {
+      return r.colors && r.colors.some(c => categorizeColor(c) === currentFeatureValue);
+    }
+    if (currentFeatureType === "bgColor") {
+      return r.bgs && r.bgs.some(c => categorizeColor(c) === currentFeatureValue);
+    }
+    return true;
+  });
+}
+// --- 结束特征选择器逻辑 ---
 
 function setStatus(text, tone = "normal") {
   els.status.textContent = text || "";
@@ -80,7 +245,21 @@ function storageSyncSet(items) {
 
 function buildRows(extract) {
   const mode = els.modeSelect ? els.modeSelect.value : "image_first";
-  return globalThis.CopyPasteExporter.rowsFromExtract(extract || {}, mode);
+  
+  let displayLines = [];
+  if (mode === "text_first") {
+    if (extract.richLines && extract.richLines.length > 0) {
+      displayLines = filterByFeature(extract.richLines).map(r => r.text);
+    } else {
+      const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
+      displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+    }
+  } else {
+    const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
+    displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+  }
+  
+  return globalThis.CopyPasteExporter.rowsFromExtract(extract || {}, mode, displayLines);
 }
 
 async function copyAsTable(extract) {
@@ -131,10 +310,18 @@ function applyExtractToUI(extract, modeOverride) {
   globalExtract = extract;
   const mode = modeOverride || (els.modeSelect ? els.modeSelect.value : "image_first");
   
-  const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
-  
-  // 无论哪种模式，预览界面都经过 guessUiLines 过滤，避免显示 "模块"、"详细描述" 等无关文案
-  const displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+  let displayLines = [];
+  if (mode === "text_first") {
+    if (extract.richLines && extract.richLines.length > 0) {
+      displayLines = filterByFeature(extract.richLines).map(r => r.text);
+    } else {
+      const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
+      displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+    }
+  } else {
+    const rawLines = Array.isArray(extract?.lines) ? extract.lines : [];
+    displayLines = globalThis.CopyPasteExporter.guessUiLines ? globalThis.CopyPasteExporter.guessUiLines(rawLines) : rawLines;
+  }
   
   const images = Array.isArray(extract?.images) ? extract.images : [];
   els.lineCount.textContent = String(displayLines.length);
@@ -159,14 +346,25 @@ function applyExtractToUI(extract, modeOverride) {
 
 async function init() {
   const { mode } = await storageSyncGet({ mode: "image_first" });
-  if (els.modeSelect) els.modeSelect.value = mode || "image_first";
+  if (els.modeSelect) {
+    els.modeSelect.value = mode || "image_first";
+    if (els.featureFilter) {
+      els.featureFilter.style.display = (mode === "text_first") ? "block" : "none";
+    }
+  }
   
   const last = await loadLastExtract();
   if (last) applyExtractToUI(last, mode || "image_first");
+  
+  // 渲染一次默认特征按钮
+  renderFeatureOptions();
 }
 
 els.modeSelect?.addEventListener("change", async () => {
   const mode = els.modeSelect.value;
+  if (els.featureFilter) {
+    els.featureFilter.style.display = mode === "text_first" ? "block" : "none";
+  }
   await storageSyncSet({ mode });
   if (globalExtract) {
     applyExtractToUI(globalExtract, mode);
@@ -201,11 +399,14 @@ els.clipboardExtractBtn?.addEventListener("click", async () => {
     }
 
     // 2. 将提取任务发给 background 处理（利用现有的合并逻辑）
-    const extractMode = "ui";
-  const res = await chrome.runtime.sendMessage({
-    type: "CP_PROCESS_CLIPBOARD",
-    payload: { html: htmlContent, text: textContent, mode: extractMode }
-  });
+    // 新增：提取富文本特征 (支持模式2)
+      const richLines = parseRichText(htmlContent, textContent);
+
+      const extractMode = els.modeSelect ? els.modeSelect.value : "image_first";
+      const res = await chrome.runtime.sendMessage({
+        type: "CP_PROCESS_CLIPBOARD",
+        payload: { html: htmlContent, text: textContent, mode: extractMode, richLines }
+      });
 
     if (!res || !res.ok) {
       throw new Error(res?.error || "处理剪贴板数据失败");

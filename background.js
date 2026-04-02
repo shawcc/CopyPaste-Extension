@@ -292,7 +292,7 @@ async function handleLLMOCR({ base64Image, apiUrl, apiModel, apiKey }) {
 }
 
 // 处理剪贴板 HTML/Text 数据
-async function handleClipboardExtract({ html, text, mode }) {
+async function handleClipboardExtract({ html, text, mode, richLines }) {
   // 1. 解析纯文本
   const rawText = text || "";
   const lines = rawText.split(/\n+/g).map(s => s.trim()).filter(Boolean);
@@ -365,11 +365,12 @@ async function handleClipboardExtract({ html, text, mode }) {
 
   // 模拟之前的内容合并逻辑，把它存入 session
   const stored = await chrome.storage.session.get("lastExtract");
-  let merged = stored.lastExtract || { lines: [], uiLines: [], images: [] };
+  let merged = stored.lastExtract || { lines: [], uiLines: [], images: [], richLines: [] };
   
   merged.lines = merged.lines.concat(lines);
   merged.uiLines = merged.uiLines.concat(uiLines);
   merged.images = merged.images.concat(images);
+  merged.richLines = (merged.richLines || []).concat(richLines || []);
 
   await chrome.storage.session.set({ lastExtract: merged });
 
