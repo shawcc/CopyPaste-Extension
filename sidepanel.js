@@ -243,9 +243,10 @@ els.copyBtn.addEventListener("click", async () => {
 
       // 如果启用了 OCR，我们在复制前把图片送去识别
       if ((hasLlmConfig || typeof Tesseract !== 'undefined') && extract.images && extract.images.length > 0) {
-        setStatus(`正在进行图片 OCR 识别 (${hasLlmConfig ? '大模型云端识别' : '本地模型首次需下载'})...`);
-        for (const img of extract.images) {
+        for (let i = 0; i < extract.images.length; i++) {
+           const img = extract.images[i];
            if (!img.ocrText || img.ocrText === "等待OCR...") {
+              setStatus(`正在用大模型识别图片 ${i + 1} / ${extract.images.length} ...`, "normal");
               try {
                  const fetchRes = { ok: true, dataUrl: img.base64 };
                  if (!fetchRes.dataUrl) {

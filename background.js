@@ -317,8 +317,20 @@ async function handleClipboardExtract({ html, text, mode }) {
       // 飞书有时在 src 里放占位符，真实链接在 data-src
       if (src.includes('base64,PHN2Zy')) continue; 
       
-      if (!seen.has(src)) {
-        seen.add(src);
+      // 去重：飞书剪贴板有时会带相同的 token 但参数略微不同的 URL，通过提取核心 token 来去重
+      let dedupeKey = src;
+      try {
+        const urlObj = new URL(src);
+        // 如果是飞书 drive 图片，提取前面的 path 作为唯一标识 (忽略 fallback_source 等 query 参数)
+        if (urlObj.pathname.includes('/space/api/box/stream/download/')) {
+          dedupeKey = urlObj.pathname;
+        }
+      } catch (e) {
+        // 如果不是合法 URL，保留原样
+      }
+      
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
         images.push({ src, alt: "剪贴板图片" });
       }
     }
@@ -327,8 +339,18 @@ async function handleClipboardExtract({ html, text, mode }) {
     const dataSrcRegex = /data-src=["']([^"']+)["']/gi;
     while ((match = dataSrcRegex.exec(html)) !== null) {
       let src = match[1];
-      if (!seen.has(src)) {
-        seen.add(src);
+      
+      let dedupeKey = src;
+      try {
+        const urlObj = new URL(src);
+        if (urlObj.pathname.includes('/space/api/box/stream/download/')) {
+          dedupeKey = urlObj.pathname;
+        }
+      } catch (e) {
+      }
+
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
         images.push({ src, alt: "剪贴板图片" });
       }
     }
