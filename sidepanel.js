@@ -143,54 +143,54 @@ function parseRichText(html, text) {
   return results;
 }
 
+// 飞书预设颜色常量表 (基于飞书调色板精确映射)
+const FEISHU_COLORS = {
+  font: {
+    'rgb(143, 149, 158)': 'gray',
+    'rgb(216, 57, 49)': 'red',
+    'rgb(222, 120, 2)': 'orange',
+    'rgb(220, 155, 4)': 'yellow',
+    'rgb(46, 161, 33)': 'green',
+    'rgb(36, 91, 206)': 'blue',
+    'rgb(100, 37, 208)': 'purple'
+  },
+  bg: {
+    // 浅色背景组
+    'rgb(242, 243, 245)': 'light_gray',
+    'rgb(255, 236, 232)': 'light_red',
+    'rgb(255, 243, 232)': 'light_orange',
+    'rgb(255, 255, 204)': 'light_yellow',
+    'rgb(232, 255, 234)': 'light_green',
+    'rgb(232, 243, 255)': 'light_blue',
+    'rgb(245, 232, 255)': 'light_purple',
+    // 深色背景组
+    'rgb(222, 224, 227)': 'gray',
+    'rgb(245, 108, 108)': 'red',
+    'rgb(255, 153, 0)': 'orange',
+    'rgb(255, 204, 0)': 'yellow',
+    'rgb(0, 180, 42)': 'green',
+    'rgb(20, 201, 201)': 'cyan',
+    'rgb(22, 93, 255)': 'blue',
+    'rgb(114, 46, 209)': 'purple',
+    'rgb(245, 49, 157)': 'pink'
+  }
+};
+
 // 颜色归类辅助
 function categorizeColor(rgbStr, isBg = false) {
   if (!rgbStr) return 'all';
-  // 处理飞书可能会用 rgba 或者 rgb
   const match = rgbStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (!match) return 'all';
-  const r = parseInt(match[1]);
-  const g = parseInt(match[2]);
-  const b = parseInt(match[3]);
+  const r = match[1];
+  const g = match[2];
+  const b = match[3];
+  const rgbKey = `rgb(${r}, ${g}, ${b})`;
   
-  // 转换成 HSL 以便更精准地判断颜色类型
-  const rNorm = r / 255;
-  const gNorm = g / 255;
-  const bNorm = b / 255;
-  const max = Math.max(rNorm, gNorm, bNorm);
-  const min = Math.min(rNorm, gNorm, bNorm);
-  let h = 0;
-  
-  if (max !== min) {
-    if (max === rNorm) h = (gNorm - bNorm) / (max - min) + (gNorm < bNorm ? 6 : 0);
-    else if (max === gNorm) h = (bNorm - rNorm) / (max - min) + 2;
-    else h = (rNorm - gNorm) / (max - min) + 4;
-    h *= 60;
+  if (isBg) {
+    return FEISHU_COLORS.bg[rgbKey] || 'all';
+  } else {
+    return FEISHU_COLORS.font[rgbKey] || 'all';
   }
-  
-  const l = (max + min) / 2;
-  const s = max === min ? 0 : l > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
-  
-  // 判断灰度
-  if (s < 0.1 || (r > 240 && g > 240 && b > 240)) {
-    // 纯白不当做有颜色
-    if (r > 245 && g > 245 && b > 245) return 'all';
-    return isBg && l > 0.9 ? 'light_gray' : 'gray';
-  }
-  
-  // 根据亮度区分深浅色背景
-  const isLight = l > 0.85;
-
-  if (h < 15 || h >= 345) return isBg && isLight ? 'light_red' : 'red';
-  if (h >= 15 && h < 45) return isBg && isLight ? 'light_orange' : 'orange';
-  if (h >= 45 && h < 75) return isBg && isLight ? 'light_yellow' : 'yellow';
-  if (h >= 75 && h < 165) return isBg && isLight ? 'light_green' : 'green';
-  if (h >= 165 && h < 210) return 'cyan'; // cyan 通常不分深浅
-  if (h >= 210 && h < 265) return isBg && isLight ? 'light_blue' : 'blue';
-  if (h >= 265 && h < 315) return isBg && isLight ? 'light_purple' : 'purple';
-  if (h >= 315 && h < 345) return 'pink';
-
-  return 'all';
 }
 
 function filterByFeature(richLines) {
