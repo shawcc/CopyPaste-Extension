@@ -222,8 +222,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       handleLLMOCR({
         base64Image: msg.payload.base64Image,
         apiUrl: msg.payload.apiUrl || items.apiUrl || "https://copypaste-tau.vercel.app/api/ocr",
-        apiModel: msg.payload.apiModel || items.apiModel,
-        apiKey: msg.payload.apiKey || items.apiKey
+        apiModel: msg.payload.apiModel || items.apiModel || "",
+        apiKey: msg.payload.apiKey || items.apiKey || ""
       }).then(res => {
         sendResponse({ ok: true, text: res });
       }).catch(err => {

@@ -862,7 +862,7 @@ async function runBackgroundOCR(extract) {
               const compressedBase64 = await compressImageForOCR(img.base64, 1500);
               const res = await chrome.runtime.sendMessage({
                 type: "CP_OCR_LLM",
-                payload: { base64Image: compressedBase64, apiUrl, apiModel: "", apiKey: "" }
+                payload: { base64Image: compressedBase64, apiUrl: "", apiModel: "", apiKey: "" }
               });
               if (isOcrCancelled) break;
               
